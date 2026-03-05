@@ -12,10 +12,10 @@ local TABS = {
 }
 
 local HINTS = {
-  "[1] Focus",
-  "[2] Short Break",
-  "[3] Long Break",
-  "[c] Start/Pause",
+  "[Tab] Next Mode",
+  "[S-Tab] Prev Mode",
+  "[s] Start/Pause",
+  "[r] Restart",
   "[q] Detach",
   "[x] Close",
 }
@@ -266,7 +266,17 @@ function M._open_win()
 
   local o = { noremap = true, silent = true, nowait = true, buffer = state.buf }
 
-  -- switch tabs
+-- Tab order for cycling
+  local tab_order = { SESSION.FOCUS, SESSION.SHORT_BREAK, SESSION.LONG_BREAK }
+
+  local function index_of(session)
+    for i, s in ipairs(tab_order) do
+      if s == session then return i end
+    end
+    return 1
+  end
+
+  -- switch tabs by number
   vim.keymap.set("n", "1", function()
     timer.switch_session(SESSION.FOCUS)
     state.active = SESSION.FOCUS
@@ -285,8 +295,32 @@ function M._open_win()
     render()
   end, o)
 
+  -- Tab: cycle forward
+  vim.keymap.set("n", "<Tab>", function()
+    local idx    = index_of(state.active)
+    local nxt    = tab_order[(idx % #tab_order) + 1]
+    timer.switch_session(nxt)
+    state.active = nxt
+    render()
+  end, o)
+
+  -- Shift-Tab: cycle backward
+  vim.keymap.set("n", "<S-Tab>", function()
+    local idx    = index_of(state.active)
+    local prev   = tab_order[((idx - 2) % #tab_order) + 1]
+    timer.switch_session(prev)
+    state.active = prev
+    render()
+  end, o)
+  
+  -- Restart: reset current session timer and stop
+  vim.keymap.set("n", "r", function()
+    timer.switch_session(state.active)
+    render()
+  end, o)
+
   -- start / resume
-  vim.keymap.set("n", "c", toggle_session, o)
+  vim.keymap.set("n", "s", toggle_session, o)
 
   -- detach (keep timer running, hide popup)
   vim.keymap.set("n", "q",     M.detach, o)
