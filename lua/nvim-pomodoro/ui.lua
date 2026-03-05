@@ -20,8 +20,8 @@ local HINTS = {
   "[x] Close",
 }
 
-local WIDTH  = 100
-local HEIGHT = 10
+local WIDTH  = 125
+local HEIGHT = 20
 
 local state = {
   buf      = nil,
@@ -89,9 +89,19 @@ local function render()
     space_around(tab_items, WIDTH),
     string.rep("─", WIDTH),
     "",
+    "",
+    "",
+    "",
+    "",
+    "",
     string.rep(" ", clock_pad)  .. clock,
     "",
     string.rep(" ", status_pad) .. status,
+    "",
+    "",
+    "",
+    "",
+    "",
     "",
     space_around(HINTS, WIDTH),
     string.rep("─", WIDTH),
@@ -100,6 +110,57 @@ local function render()
   vim.api.nvim_buf_set_option(state.buf, "modifiable", true)
   vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, lines)
   vim.api.nvim_buf_set_option(state.buf, "modifiable", false)
+
+  -- Clear previous extmarks
+  local ns = vim.api.nvim_create_namespace("pomodoro_hl")
+  vim.api.nvim_buf_clear_namespace(state.buf, ns, 0, -1)
+
+  -- Row 1 (0-indexed): tab bar — highlight each tab individually
+  local col = 0
+  for _, tab in ipairs(TABS) do
+    local is_active = tab.id == state.active
+    local raw_label = (is_active and ("[ " .. tab.label .. " ]") or ("  " .. tab.label .. "  "))
+    local byte_len  = #raw_label
+
+    local hl
+    if is_active then
+      -- each active tab gets its own colour
+      if tab.id == SESSION.FOCUS       then hl = "PomodoroTabFocus"
+      elseif tab.id == SESSION.SHORT_BREAK then hl = "PomodoroTabShort"
+      else                                   hl = "PomodoroTabLong"
+      end
+    else
+      hl = "PomodoroTabInactive"
+    end
+
+    -- account for space_around left padding on row 1
+    -- recompute the same left_pad space_around uses so col stays in sync
+    local n         = #TABS
+    local total_len = 0
+    for _, t in ipairs(TABS) do
+      total_len = total_len + vim.fn.strdisplaywidth(
+        (t.id == state.active) and ("[ " .. t.label .. " ]") or ("  " .. t.label .. "  ")
+      )
+    end
+    local slot     = (WIDTH - total_len) / n
+    local left_pad = math.floor(slot / 2)
+
+    if col == 0 then col = left_pad end  -- first tab offset
+
+    vim.api.nvim_buf_add_highlight(state.buf, ns, hl, 1, col, col + byte_len)
+    col = col + byte_len + left_pad + math.floor(slot - left_pad)
+  end
+
+  -- Row 4 (0-indexed): clock on line index 4
+  local clock_str  = fmt_time(timer.seconds_left())
+  local clock_scol = math.floor((WIDTH - vim.fn.strdisplaywidth(clock_str)) / 2)
+  vim.api.nvim_buf_add_highlight(state.buf, ns, "PomorodoClock", 4, clock_scol, clock_scol + #clock_str)
+
+  -- Row 6 (0-indexed): status on line index 6
+  local status_str  = timer.is_running() and "▶  Running" or "⏸  Paused"
+  local status_hl   = timer.is_running() and "PomodoroRunning" or "PomorodoPaused"
+  local status_scol = math.floor((WIDTH - vim.fn.strdisplaywidth(status_str)) / 2)
+  vim.api.nvim_buf_add_highlight(state.buf, ns, status_hl, 6, status_scol, status_scol + #status_str)
 end
 
 -- ── session handlers ───────────────────────────────────────────────────────
@@ -172,6 +233,17 @@ function M._open_win()
 
   vim.api.nvim_win_set_option(state.win, "wrap",       false)
   vim.api.nvim_win_set_option(state.win, "cursorline", false)
+
+  -- Define highlight groups (only once; subsequent calls are no-ops)
+  vim.api.nvim_set_hl(0, "PomodoroTabActive",   { fg = "#1e1e2e", bg = "#cba6f7", bold = true })
+  vim.api.nvim_set_hl(0, "PomodoroTabInactive", { fg = "#6c7086",                 bold = false })
+  vim.api.nvim_set_hl(0, "PomodoroTabFocus",    { fg = "#1e1e2e", bg = "#f38ba8", bold = true })
+  vim.api.nvim_set_hl(0, "PomodoroTabShort",    { fg = "#1e1e2e", bg = "#a6e3a1", bold = true })
+  vim.api.nvim_set_hl(0, "PomodoroTabLong",     { fg = "#1e1e2e", bg = "#89b4fa", bold = true })
+  vim.api.nvim_set_hl(0, "PomorodoClock",       { fg = "#cdd6f4",                 bold = true })
+  vim.api.nvim_set_hl(0, "PomodoroRunning",     { fg = "#a6e3a1",                 bold = true })
+  vim.api.nvim_set_hl(0, "PomorodoPaused",      { fg = "#f38ba8",                 bold = false })
+  --
 
   local o = { noremap = true, silent = true, nowait = true, buffer = state.buf }
 
