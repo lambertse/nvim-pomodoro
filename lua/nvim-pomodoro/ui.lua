@@ -30,6 +30,50 @@ local state = {
   detached = false,
 }
 
+-- ── big digit font (5 rows × variable width) ──────────────────────────────
+local BIG_DIGITS = {
+  ["0"] = { "█▀▀█", "█  █", "█  █", "█  █", "█▄▄█" },
+  ["1"] = { "▀█ ",  " █ ",  " █ ",  " █ ",  "▄█▄"  },
+  ["2"] = { "█▀▀█", "   █", "▄▄▄█", "█   ", "█▄▄▄" },
+  ["3"] = { "█▀▀█", "   █", " ▀▀█", "   █", "█▄▄█" },
+  ["4"] = { "█  █", "█  █", "█▄▄█", "   █", "   █" },
+  ["5"] = { "█▀▀▀", "█   ", "▀▀▀█", "   █", "█▄▄█" },
+  ["6"] = { "█▀▀▀", "█   ", "█▀▀█", "█  █", "█▄▄█" },
+  ["7"] = { "█▀▀█", "   █", "  █ ", " █  ", " █  " },
+  ["8"] = { "█▀▀█", "█  █", "█▀▀█", "█  █", "█▄▄█" },
+  ["9"] = { "█▀▀█", "█  █", "█▄▄█", "   █", "█▄▄█" },
+  [":"] = { "   ",  " ▪ ",  "   ",  " ▪ ",  "   "  },
+}
+
+local BIG_DIGIT_ROWS = 5
+local BIG_DIGIT_GAP  = 1
+
+local function big_clock_lines(time_str, width)
+  local rows = {}
+  for r = 1, BIG_DIGIT_ROWS do
+    rows[r] = ""
+  end
+
+  for i = 1, #time_str do
+    local ch    = time_str:sub(i, i)
+    local glyph = BIG_DIGITS[ch] or BIG_DIGITS["0"]
+    for r = 1, BIG_DIGIT_ROWS do
+      if i > 1 then
+        rows[r] = rows[r] .. string.rep(" ", BIG_DIGIT_GAP)
+      end
+      rows[r] = rows[r] .. glyph[r]
+    end
+  end
+
+  local result = {}
+  for r = 1, BIG_DIGIT_ROWS do
+    local dw  = vim.fn.strdisplaywidth(rows[r])
+    local pad = math.floor((width - dw) / 2)
+    result[r] = string.rep(" ", math.max(pad, 0)) .. rows[r]
+  end
+  return result
+end
+
 -- ── helpers ────────────────────────────────────────────────────────────────
 
 local function fmt_time(secs)
@@ -81,53 +125,57 @@ local function render()
 
   local clock      = fmt_time(timer.seconds_left())
   local status     = timer.is_running() and "▶  Running" or "⏸  Paused"
-  local clock_pad  = math.floor((WIDTH - vim.fn.strdisplaywidth(clock))  / 2)
   local status_pad = math.floor((WIDTH - vim.fn.strdisplaywidth(status)) / 2)
+  local big        = big_clock_lines(clock, WIDTH)
 
   local lines = {
-    string.rep("─", WIDTH),                       -- [1]  row 0 : top divider
-    space_around(tab_items, WIDTH),                -- [2]  row 1 : tab bar
-    string.rep("─", WIDTH),                       -- [3]  row 2 : mid divider
-    "",                                            -- [4]  row 3
-    "",                                            -- [5]  row 4
-    "",                                            -- [6]  row 5
-    "",                                            -- [7]  row 6
-    string.rep(" ", clock_pad)  .. clock,          -- [8]  row 7 : clock
-    "",                                            -- [9]  row 8
-    string.rep(" ", status_pad) .. status,         -- [10] row 9 : status
-    "",                                            -- [11] row 10
-    "",                                            -- [12] row 11
-    "",                                            -- [13] row 12
-    "",                                            -- [14] row 13
-    "",                                            -- [15] row 14
-    "",                                            -- [16] row 15
-    "",                                            -- [17] row 16
-    space_around(HINTS, WIDTH),                    -- [18] row 17 : hint bar
-    string.rep("─", WIDTH),                       -- [19] row 18 : bottom divider
-    "",                                            -- [20] row 19
+    string.rep("─", WIDTH),                        -- [1]  row 0  : top divider
+    space_around(tab_items, WIDTH),                 -- [2]  row 1  : tab bar
+    string.rep("─", WIDTH),                        -- [3]  row 2  : mid divider
+    "",                                             -- [4]  row 3  : padding
+    "",                                             -- [5]  row 4  : padding
+    big[1],                                         -- [6]  row 5  : clock line 1
+    big[2],                                         -- [7]  row 6  : clock line 2
+    big[3],                                         -- [8]  row 7  : clock line 3
+    big[4],                                         -- [9]  row 8  : clock line 4
+    big[5],                                         -- [10] row 9  : clock line 5
+    "",                                             -- [11] row 10 : padding
+    string.rep(" ", status_pad) .. status,          -- [12] row 11 : status
+    "",                                             -- [13] row 12 : padding
+    "",                                             -- [14] row 13 : padding
+    "",                                             -- [15] row 14 : padding
+    "",                                             -- [16] row 15 : padding
+    "",                                             -- [17] row 16 : padding
+    space_around(HINTS, WIDTH),                     -- [18] row 17 : hint bar
+    string.rep("─", WIDTH),                        -- [19] row 18 : bottom divider
+    "",                                             -- [20] row 19
   }
 
-  -- ── write lines to buffer ──────────────────────────────────────────────
   vim.api.nvim_buf_set_option(state.buf, "modifiable", true)
   vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, lines)
   vim.api.nvim_buf_set_option(state.buf, "modifiable", false)
 
-  -- ── highlights (Hunk 3 goes entirely below this line) ─────────────────
+  -- ── highlights ────────────────────────────────────────────────────────
 
   local ns = vim.api.nvim_create_namespace("pomodoro_hl")
   vim.api.nvim_buf_clear_namespace(state.buf, ns, 0, -1)
 
-  -- Tab bar: row 1
+  -- Tab bar: row 1 — highlight each tab individually
   local col = 0
   for _, tab in ipairs(TABS) do
-    local is_active  = tab.id == state.active
-    local raw_label  = is_active and ("[ " .. tab.label .. " ]") or ("  " .. tab.label .. "  ")
-    local byte_len   = #raw_label
-    local n          = #TABS
-    local total_len  = 0
+    local is_active = tab.id == state.active
+    local raw_label = is_active
+      and ("[ " .. tab.label .. " ]")
+      or  ("  " .. tab.label .. "  ")
+    local byte_len  = #raw_label
+
+    local n         = #TABS
+    local total_len = 0
     for _, t in ipairs(TABS) do
       total_len = total_len + vim.fn.strdisplaywidth(
-        (t.id == state.active) and ("[ " .. t.label .. " ]") or ("  " .. t.label .. "  ")
+        (t.id == state.active)
+          and ("[ " .. t.label .. " ]")
+          or  ("  " .. t.label .. "  ")
       )
     end
     local slot     = (WIDTH - total_len) / n
@@ -153,20 +201,38 @@ local function render()
     vim.api.nvim_buf_add_highlight(state.buf, ns, "PomorodoDivider", row, 0, -1)
   end
 
-  -- Clock: row 7
-  local clock_str  = fmt_time(timer.seconds_left())
-  local clock_scol = math.floor((WIDTH - vim.fn.strdisplaywidth(clock_str)) / 2)
-  vim.api.nvim_buf_add_highlight(state.buf, ns, "PomorodoClock", 7, clock_scol, clock_scol + #clock_str)
+  -- Animated clock: colour cycles through palette each second
+  local palette = {
+    -- "#cba6f7",  -- mauve
+    -- "#89b4fa",  -- blue
+    -- "#74c7ec",  -- sapphire
+    "#a6e3a1",  -- green
+    -- "#f9e2af",  -- yellow
+    -- "#fab387",  -- peach
+    "#f38ba8",  -- red
+  }
+  -- If the second left less than 30, return red. Then use mause
+  local tick_idx = 1 
+  if timer.seconds_left() < 55 then
+    tick_idx = 2
+  end
 
-  -- Status: row 9
+  vim.api.nvim_set_hl(0, "PomodoroClockPulse", { fg = palette[tick_idx], bold = true })
+
+  -- Highlight all 5 big-digit rows (rows 5–9, 0-indexed)
+  for r = 5, 9 do
+    vim.api.nvim_buf_add_highlight(state.buf, ns, "PomodoroClockPulse", r, 0, -1)
+  end
+
+  -- Status: row 11
   local status_str  = timer.is_running() and "▶  Running" or "⏸  Paused"
   local status_hl   = timer.is_running() and "PomodoroRunning" or "PomorodoPaused"
   local status_scol = math.floor((WIDTH - vim.fn.strdisplaywidth(status_str)) / 2)
-  vim.api.nvim_buf_add_highlight(state.buf, ns, status_hl, 9, status_scol, status_scol + #status_str)
+  vim.api.nvim_buf_add_highlight(state.buf, ns, status_hl, 11, status_scol, status_scol + #status_str)
 
-  -- Hint bar: row 17
+  -- Hint bar: row 17 — colour [key] and label separately
   local hint_row    = 17
-  local hint_line   = lines[18]  -- 1-indexed in the lines table
+  local hint_line   = lines[18]
   local search_from = 0
   for _, hint in ipairs(HINTS) do
     local s = hint_line:find(hint, search_from + 1, true)
@@ -180,6 +246,7 @@ local function render()
     end
   end
 end
+
 -- ── session handlers ───────────────────────────────────────────────────────
 
 local function on_done(finished, nxt)
@@ -192,6 +259,14 @@ local function on_done(finished, nxt)
   end
 
   render()
+
+  timer.start(
+    function(session, _)
+      state.active = session
+      if is_open() then render() end
+    end,
+    on_done
+  )
 end
 
 local function toggle_session()
@@ -199,10 +274,8 @@ local function toggle_session()
     timer.pause()
     render()
   else
-    -- First time: no callbacks saved yet → pass them; subsequent: resume uses saved ones
     timer.resume()
     if not timer.is_running() then
-      -- resume() was a no-op (never started), do a fresh start
       timer.start(
         function(session, _)
           state.active = session
@@ -243,13 +316,13 @@ function M._open_win()
   vim.api.nvim_win_set_option(state.win, "wrap",       false)
   vim.api.nvim_win_set_option(state.win, "cursorline", false)
 
-  -- Define highlight groups (only once; subsequent calls are no-ops)
+  -- Define highlight groups
   vim.api.nvim_set_hl(0, "PomodoroTabActive",   { fg = "#1e1e2e", bg = "#cba6f7", bold = true  })
   vim.api.nvim_set_hl(0, "PomodoroTabInactive", { fg = "#585b70",                 bold = false })
   vim.api.nvim_set_hl(0, "PomodoroTabFocus",    { fg = "#1e1e2e", bg = "#f38ba8", bold = true  })
   vim.api.nvim_set_hl(0, "PomodoroTabShort",    { fg = "#1e1e2e", bg = "#a6e3a1", bold = true  })
   vim.api.nvim_set_hl(0, "PomodoroTabLong",     { fg = "#1e1e2e", bg = "#74c7ec", bold = true  })
-  vim.api.nvim_set_hl(0, "PomorodoClock",       { fg = "#cdd6f4",                 bold = true, italic = true })
+  vim.api.nvim_set_hl(0, "PomodoroClockPulse",  { fg = "#cba6f7",                 bold = true  })
   vim.api.nvim_set_hl(0, "PomodoroRunning",     { fg = "#a6e3a1",                 bold = true  })
   vim.api.nvim_set_hl(0, "PomorodoPaused",      { fg = "#fab387",                 bold = false })
   vim.api.nvim_set_hl(0, "PomodoroHintKey",     { fg = "#cba6f7",                 bold = true  })
@@ -258,7 +331,7 @@ function M._open_win()
 
   local o = { noremap = true, silent = true, nowait = true, buffer = state.buf }
 
--- Tab order for cycling
+  -- Tab order for cycling
   local tab_order = { SESSION.FOCUS, SESSION.SHORT_BREAK, SESSION.LONG_BREAK }
 
   local function index_of(session)
@@ -268,7 +341,7 @@ function M._open_win()
     return 1
   end
 
-  -- switch tabs by number
+  -- Switch tabs by number
   vim.keymap.set("n", "1", function()
     timer.switch_session(SESSION.FOCUS)
     state.active = SESSION.FOCUS
@@ -289,8 +362,8 @@ function M._open_win()
 
   -- Tab: cycle forward
   vim.keymap.set("n", "<Tab>", function()
-    local idx    = index_of(state.active)
-    local nxt    = tab_order[(idx % #tab_order) + 1]
+    local idx  = index_of(state.active)
+    local nxt  = tab_order[(idx % #tab_order) + 1]
     timer.switch_session(nxt)
     state.active = nxt
     render()
@@ -298,27 +371,27 @@ function M._open_win()
 
   -- Shift-Tab: cycle backward
   vim.keymap.set("n", "<S-Tab>", function()
-    local idx    = index_of(state.active)
-    local prev   = tab_order[((idx - 2) % #tab_order) + 1]
+    local idx  = index_of(state.active)
+    local prev = tab_order[((idx - 2) % #tab_order) + 1]
     timer.switch_session(prev)
     state.active = prev
     render()
   end, o)
-  
-  -- Restart: reset current session timer and stop
+
+  -- Restart: reset current session timer
   vim.keymap.set("n", "r", function()
     timer.switch_session(state.active)
     render()
   end, o)
 
-  -- start / resume
+  -- Toggle start / pause
   vim.keymap.set("n", "s", toggle_session, o)
 
-  -- detach (keep timer running, hide popup)
+  -- Detach: keep timer running, hide popup
   vim.keymap.set("n", "q",     M.detach, o)
   vim.keymap.set("n", "<Esc>", M.detach, o)
 
-  -- close (stop timer + close popup)
+  -- Close: stop timer and close popup
   vim.keymap.set("n", "x", M.close, o)
 
   render()
@@ -343,6 +416,11 @@ function M.detach()
   state.win      = nil
   state.buf      = nil
   state.detached = true
+  vim.notify(
+    "Pomodoro timer is running in the background.",
+    vim.log.levels.INFO,
+    { title = "Pomodoro" }
+  )
 end
 
 function M.toggle()
