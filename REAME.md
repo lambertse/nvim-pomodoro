@@ -1,1 +1,0 @@
-# Neovim Pomodoro Timer
