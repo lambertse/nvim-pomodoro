@@ -6,6 +6,24 @@ M.defaults = {
   long_break_time          = 15,  -- minutes
   cycles_before_long_break = 4,
   keymap                   = "<leader>p",
+  -- Sound configuration
+  sound = {
+    enabled = true,
+    volume  = 1,
+    backend = "auto",
+    events  = {
+      start     = true,
+      done      = true,
+      milestone = true,
+      tick      = true,   -- off by default, can be noisy
+    },
+    files = {
+      start     = nil,     -- nil = use bundled default
+      done      = nil,
+      milestone = nil,
+      tick      = nil,
+    },
+  },
 }
 
 function M.merge(user_opts)

@@ -10,8 +10,10 @@ function M.setup(user_opts)
 
   local timer = require("nvim-pomodoro.timer")
   local ui    = require("nvim-pomodoro.ui")
+  local sound = require("nvim-pomodoro.sound")
 
   timer.setup(opts)
+  sound.setup(opts.sound)
 
   vim.api.nvim_create_user_command("Pomodoro", function()
     ui.toggle()

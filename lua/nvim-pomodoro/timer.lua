@@ -32,10 +32,14 @@ local session_labels = {
   [M.SESSION.LONG_BREAK]  = "🛌 Long Break",
 }
 
+-- Sound notifications for milestones (5 min, 2 min, 1 min, 30 sec, 10 sec)
+local sound = require("nvim-pomodoro.sound")
+
 local function notify_milestone(secs)
   for _, m in ipairs(MILESTONES) do
     if secs == m.secs and not state.notified[m.secs] then
       state.notified[m.secs] = true
+      sound.play("milestone")
       vim.notify(
         string.format("%s — %s", session_labels[state.session] or "Session", m.msg),
         vim.log.levels.WARN,
@@ -95,6 +99,7 @@ function M.start(on_tick, on_done)
 
   -- Kill any orphaned handle from a previous load
   stop_handle()
+  sound.play("start")
 
   state.on_tick = on_tick
   state.on_done = on_done
@@ -113,8 +118,10 @@ function M.start(on_tick, on_done)
     end
 
     notify_milestone(state.seconds_left)
+    sound.play("tick")
 
     if state.seconds_left <= 0 then
+      sound.play("done")
       local finished     = state.session
       state.running      = false
       stop_handle()
@@ -150,6 +157,9 @@ function M.stop()
   state.on_tick = nil
   state.on_done = nil
   stop_handle()
+  -- Stop any in-flight tick sound
+  local b = require("nvim-pomodoro.sound.backend.macos")
+  pcall(b.stop_tick)
 end
 
 function M.is_running()
