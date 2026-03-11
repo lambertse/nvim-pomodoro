@@ -1,3 +1,9 @@
+-- nvim-pomodoro/ui.lua
+-- Owns the floating window and keymaps for this nvim session only.
+-- Timer mutations are sent via IPC so both server and client go through
+-- the same path. Rendering is always driven by on_remote_state(), which is
+-- called both by the IPC client callback AND by the server's own on_tick.
+
 local M = {}
 
 local timer = require("nvim-pomodoro.timer")
@@ -26,13 +32,14 @@ local HEIGHT = 20
 local state = {
 	buf = nil,
 	win = nil,
-  backdrop_buf = nil,
-  backdrop_win = nil,   
+	backdrop_buf = nil,
+	backdrop_win = nil,
 	active = SESSION.FOCUS,
 	detached = false,
 }
 
--- ── big digit font (5 rows × variable width) ──────────────────────────────
+-- ── big digit font ────────────────────────────────────────────────────────────
+
 local BIG_DIGITS = {
 	["0"] = { "█▀▀█", "█  █", "█  █", "█  █", "█▄▄█" },
 	["1"] = { "▀█ ", " █ ", " █ ", " █ ", "▄█▄" },
@@ -76,7 +83,7 @@ local function big_clock_lines(time_str, width)
 	return result
 end
 
--- ── helpers ────────────────────────────────────────────────────────────────
+-- ── helpers ───────────────────────────────────────────────────────────────────
 
 local function fmt_time(secs)
 	return string.format("%02d:%02d", math.floor(secs / 60), secs % 60)
@@ -86,7 +93,6 @@ local function is_open()
 	if state.win ~= nil and vim.api.nvim_win_is_valid(state.win) then
 		return true
 	end
-	-- Fallback: scan all windows for a pomodoro buffer
 	for _, win in ipairs(vim.api.nvim_list_wins()) do
 		local buf = vim.api.nvim_win_get_buf(win)
 		local ok, ft = pcall(vim.api.nvim_buf_get_option, buf, "filetype")
@@ -105,9 +111,7 @@ local function space_around(items, width)
 	for _, item in ipairs(items) do
 		total_len = total_len + vim.fn.strdisplaywidth(item)
 	end
-
-	local total_space = width - total_len
-	local slot = total_space / n
+	local slot = (width - total_len) / n
 	local left_pad = math.floor(slot / 2)
 	local right_pad = math.floor(slot - left_pad)
 
@@ -124,7 +128,6 @@ local function space_around(items, width)
 	return result
 end
 
--- Open a full-screen dim layer behind the popup
 local function open_backdrop()
 	local ui = vim.api.nvim_list_uis()[1]
 	local buf = vim.api.nvim_create_buf(false, true)
@@ -137,7 +140,7 @@ local function open_backdrop()
 		style = "minimal",
 		border = "none",
 		focusable = false,
-		zindex = 40, 
+		zindex = 40,
 	})
 	vim.api.nvim_set_hl(0, "PomodoroBackdrop", { bg = "#0a0a0f", blend = 30 })
 	vim.api.nvim_win_set_option(win, "winhighlight", "Normal:PomodoroBackdrop")
@@ -145,7 +148,16 @@ local function open_backdrop()
 	return buf, win
 end
 
--- ── rendering ──────────────────────────────────────────────────────────────
+-- ── IPC command helper ────────────────────────────────────────────────────────
+
+local function send(action, payload)
+	local ok, ipc = pcall(require, "nvim-pomodoro.ipc")
+	if ok then
+		ipc.send_command(action, payload)
+	end
+end
+
+-- ── rendering ─────────────────────────────────────────────────────────────────
 
 local function render()
 	if not state.buf or not vim.api.nvim_buf_is_valid(state.buf) then
@@ -167,46 +179,43 @@ local function render()
 	local big = big_clock_lines(clock, WIDTH)
 
 	local lines = {
-		string.rep("─", WIDTH), -- [1]  row 0  : top divider
-		space_around(tab_items, WIDTH), -- [2]  row 1  : tab bar
-		string.rep("─", WIDTH), -- [3]  row 2  : mid divider
-		"", -- [4]  row 3  : padding
-		"", -- [5]  row 4  : padding
-		big[1], -- [6]  row 5  : clock line 1
-		big[2], -- [7]  row 6  : clock line 2
-		big[3], -- [8]  row 7  : clock line 3
-		big[4], -- [9]  row 8  : clock line 4
-		big[5], -- [10] row 9  : clock line 5
-		"", -- [11] row 10 : padding
-		string.rep(" ", status_pad) .. status, -- [12] row 11 : status
-		"", -- [13] row 12 : padding
-		"", -- [14] row 13 : padding
-		"", -- [15] row 14 : padding
-		"", -- [16] row 15 : padding
-		"", -- [17] row 16 : padding
-		space_around(HINTS, WIDTH), -- [18] row 17 : hint bar
-		string.rep("─", WIDTH), -- [19] row 18 : bottom divider
-		"", -- [20] row 19
+		string.rep("─", WIDTH), -- [1]  row 0
+		space_around(tab_items, WIDTH), -- [2]  row 1
+		string.rep("─", WIDTH), -- [3]  row 2
+		"",
+		"",
+		big[1],
+		big[2],
+		big[3],
+		big[4],
+		big[5],
+		"",
+		string.rep(" ", status_pad) .. status, -- [12] row 11
+		"",
+		"",
+		"",
+		"",
+		"",
+		space_around(HINTS, WIDTH), -- [18] row 17
+		string.rep("─", WIDTH), -- [19] row 18
+		"",
 	}
 
 	vim.api.nvim_buf_set_option(state.buf, "modifiable", true)
 	vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, lines)
 	vim.api.nvim_buf_set_option(state.buf, "modifiable", false)
 
-	-- ── highlights ────────────────────────────────────────────────────────
-
 	local ns = vim.api.nvim_create_namespace("pomodoro_hl")
 	vim.api.nvim_buf_clear_namespace(state.buf, ns, 0, -1)
 
-	-- Tab bar: row 1 — highlight each tab individually
+	-- Tab bar
 	local col = 0
 	for _, tab in ipairs(TABS) do
 		local is_active = tab.id == state.active
 		local raw_label = is_active and ("[ " .. tab.label .. " ]") or ("  " .. tab.label .. "  ")
 		local byte_len = #raw_label
 
-		local n = #TABS
-		local total_len = 0
+		local n, total_len = #TABS, 0
 		for _, t in ipairs(TABS) do
 			total_len = total_len
 				+ vim.fn.strdisplaywidth(
@@ -236,42 +245,26 @@ local function render()
 		col = col + byte_len + left_pad + math.floor(slot - left_pad)
 	end
 
-	-- Divider lines: rows 0, 2, 18
+	-- Dividers
 	for _, row in ipairs({ 0, 2, 18 }) do
 		vim.api.nvim_buf_add_highlight(state.buf, ns, "PomorodoDivider", row, 0, -1)
 	end
 
-	-- Animated clock: colour cycles through palette each second
-	local palette = {
-		-- "#cba6f7",  -- mauve
-		-- "#89b4fa",  -- blue
-		-- "#74c7ec",  -- sapphire
-		"#a6e3a1", -- green
-		-- "#f9e2af",  -- yellow
-		-- "#fab387",  -- peach
-		"#f38ba8", -- red
-	}
-	-- If the second left less than 30, return red. Then use mause
-	local tick_idx = 1
-	if timer.seconds_left() < 55 then
-		tick_idx = 2
-	end
-
+	-- Clock colour
+	local palette = { "#a6e3a1", "#f38ba8" }
+	local tick_idx = (timer.seconds_left() < 55) and 2 or 1
 	vim.api.nvim_set_hl(0, "PomodoroClockPulse", { fg = palette[tick_idx], bold = true })
-
-	-- Highlight all 5 big-digit rows (rows 5–9, 0-indexed)
 	for r = 5, 9 do
 		vim.api.nvim_buf_add_highlight(state.buf, ns, "PomodoroClockPulse", r, 0, -1)
 	end
 
-	-- Status: row 11
+	-- Status
 	local status_str = timer.is_running() and "▶  Running" or "⏸  Paused"
 	local status_hl = timer.is_running() and "PomodoroRunning" or "PomorodoPaused"
 	local status_scol = math.floor((WIDTH - vim.fn.strdisplaywidth(status_str)) / 2)
 	vim.api.nvim_buf_add_highlight(state.buf, ns, status_hl, 11, status_scol, status_scol + #status_str)
 
-	-- Hint bar: row 17 — colour [key] and label separately
-	local hint_row = 17
+	-- Hints
 	local hint_line = lines[18]
 	local search_from = 0
 	for _, hint in ipairs(HINTS) do
@@ -280,53 +273,14 @@ local function render()
 			local key_start = s - 1
 			local key_end = key_start + #hint:match("%[.-%]")
 			local label_end = key_start + #hint
-			vim.api.nvim_buf_add_highlight(state.buf, ns, "PomodoroHintKey", hint_row, key_start, key_end)
-			vim.api.nvim_buf_add_highlight(state.buf, ns, "PomodoroHintLabel", hint_row, key_end, label_end)
+			vim.api.nvim_buf_add_highlight(state.buf, ns, "PomodoroHintKey", 17, key_start, key_end)
+			vim.api.nvim_buf_add_highlight(state.buf, ns, "PomodoroHintLabel", 17, key_end, label_end)
 			search_from = s + #hint - 1
 		end
 	end
 end
 
--- ── session handlers ───────────────────────────────────────────────────────
-
-local function on_done(finished, nxt)
-	notify.session_ended(finished, nxt)
-	state.active = nxt
-
-	if state.detached or not is_open() then
-		state.detached = false
-		M._open_win()
-	end
-
-	render()
-
-	timer.start(function(session, _)
-		state.active = session
-		if is_open() then
-			render()
-		end
-	end, on_done)
-end
-
-local function toggle_session()
-	if timer.is_running() then
-		timer.pause()
-		render()
-	else
-		timer.resume()
-		if not timer.is_running() then
-			timer.start(function(session, _)
-				state.active = session
-				if is_open() then
-					render()
-				end
-			end, on_done)
-		end
-		render()
-	end
-end
-
--- ── window management ──────────────────────────────────────────────────────
+-- ── window management ─────────────────────────────────────────────────────────
 
 function M._open_win()
 	for _, win in ipairs(vim.api.nvim_list_wins()) do
@@ -349,7 +303,7 @@ function M._open_win()
 	local row = math.floor((ui.height - HEIGHT) / 2)
 	local col = math.floor((ui.width - WIDTH) / 2)
 
-  state.backdrop_buf, state.backdrop_win = open_backdrop()
+	state.backdrop_buf, state.backdrop_win = open_backdrop()
 	state.win = vim.api.nvim_open_win(state.buf, true, {
 		relative = "editor",
 		width = WIDTH,
@@ -365,7 +319,6 @@ function M._open_win()
 	vim.api.nvim_win_set_option(state.win, "wrap", false)
 	vim.api.nvim_win_set_option(state.win, "cursorline", false)
 
-	-- Define highlight groups
 	vim.api.nvim_set_hl(0, "PomodoroTabActive", { fg = "#1e1e2e", bg = "#cba6f7", bold = true })
 	vim.api.nvim_set_hl(0, "PomodoroTabInactive", { fg = "#585b70", bold = false })
 	vim.api.nvim_set_hl(0, "PomodoroTabFocus", { fg = "#1e1e2e", bg = "#f38ba8", bold = true })
@@ -379,8 +332,6 @@ function M._open_win()
 	vim.api.nvim_set_hl(0, "PomorodoDivider", { fg = "#313244" })
 
 	local o = { noremap = true, silent = true, nowait = true, buffer = state.buf }
-
-	-- Tab order for cycling
 	local tab_order = { SESSION.FOCUS, SESSION.SHORT_BREAK, SESSION.LONG_BREAK }
 
 	local function index_of(session)
@@ -392,72 +343,73 @@ function M._open_win()
 		return 1
 	end
 
-	-- Switch tabs by number
 	vim.keymap.set("n", "1", function()
-		timer.switch_session(SESSION.FOCUS)
+		send("switch_session", { session = SESSION.FOCUS })
 		state.active = SESSION.FOCUS
 		render()
 	end, o)
 
 	vim.keymap.set("n", "2", function()
-		timer.switch_session(SESSION.SHORT_BREAK)
+		send("switch_session", { session = SESSION.SHORT_BREAK })
 		state.active = SESSION.SHORT_BREAK
 		render()
 	end, o)
 
 	vim.keymap.set("n", "3", function()
-		timer.switch_session(SESSION.LONG_BREAK)
+		send("switch_session", { session = SESSION.LONG_BREAK })
 		state.active = SESSION.LONG_BREAK
 		render()
 	end, o)
 
-	-- Tab: cycle forward
 	vim.keymap.set("n", "<Tab>", function()
-		local idx = index_of(state.active)
-		local nxt = tab_order[(idx % #tab_order) + 1]
-		timer.switch_session(nxt)
+		local nxt = tab_order[(index_of(state.active) % #tab_order) + 1]
+		send("switch_session", { session = nxt })
 		state.active = nxt
 		render()
 	end, o)
 
-	-- Shift-Tab: cycle backward
 	vim.keymap.set("n", "<S-Tab>", function()
-		local idx = index_of(state.active)
-		local prev = tab_order[((idx - 2) % #tab_order) + 1]
-		timer.switch_session(prev)
+		local prev = tab_order[((index_of(state.active) - 2) % #tab_order) + 1]
+		send("switch_session", { session = prev })
 		state.active = prev
 		render()
 	end, o)
 
-	-- Restart: reset current session timer
 	vim.keymap.set("n", "r", function()
-		timer.switch_session(state.active)
+		send("switch_session", { session = state.active })
 		render()
 	end, o)
 
-	-- Toggle start / pause
-	vim.keymap.set("n", "s", toggle_session, o)
+	-- Toggle start / pause — just send the intent; the server's on_tick
+	-- will call on_remote_state() which calls render() every second.
+	vim.keymap.set("n", "s", function()
+		if timer.is_running() then
+			send("pause")
+		else
+			send("start")
+		end
+		-- render() will be called by on_remote_state on the very next tick;
+		-- call it once immediately so the status line flips without delay.
+		render()
+	end, o)
 
-	-- Detach: keep timer running, hide popup
 	vim.keymap.set("n", "q", M.detach, o)
 	vim.keymap.set("n", "<Esc>", M.detach, o)
-
-	-- Close: stop timer and close popup
 	vim.keymap.set("n", "x", M.close, o)
 
 	render()
 end
 
--- ── public API ─────────────────────────────────────────────────────────────
+-- ── public API ────────────────────────────────────────────────────────────────
 
 function M.close()
-  if state.backdrop_win and vim.api.nvim_win_is_valid(state.backdrop_win) then
-    vim.api.nvim_win_close(state.backdrop_win, true)
-  end
-  state.backdrop_win = nil
-  state.backdrop_buf = nil
+	if state.backdrop_win and vim.api.nvim_win_is_valid(state.backdrop_win) then
+		vim.api.nvim_win_close(state.backdrop_win, true)
+	end
+	state.backdrop_win = nil
+	state.backdrop_buf = nil
 
-	timer.stop()
+	send("stop")
 	if is_open() then
 		vim.api.nvim_win_close(state.win, true)
 	end
@@ -467,11 +419,11 @@ function M.close()
 end
 
 function M.detach()
-  if state.backdrop_win and vim.api.nvim_win_is_valid(state.backdrop_win) then
-    vim.api.nvim_win_close(state.backdrop_win, true)
-  end
-  state.backdrop_win = nil
-  state.backdrop_buf = nil
+	if state.backdrop_win and vim.api.nvim_win_is_valid(state.backdrop_win) then
+		vim.api.nvim_win_close(state.backdrop_win, true)
+	end
+	state.backdrop_win = nil
+	state.backdrop_buf = nil
 
 	if is_open() then
 		vim.api.nvim_win_close(state.win, true)
@@ -487,10 +439,23 @@ function M.toggle()
 		M.detach()
 		return
 	end
-
 	state.active = timer.current_session()
 	state.detached = false
 	M._open_win()
+end
+
+--- Called every tick — both by IPC client callback AND by the server's own
+--- on_tick (via init.lua). This is the SINGLE place that drives render().
+function M.on_remote_state(s)
+	timer.apply_remote_state(s)
+	state.active = s.session
+	if is_open() then
+		render()
+	elseif state.detached and not s.running then
+		-- Session ended while detached → re-open the window
+		state.detached = false
+		M._open_win()
+	end
 end
 
 return M

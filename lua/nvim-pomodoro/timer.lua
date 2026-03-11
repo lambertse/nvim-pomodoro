@@ -32,9 +32,24 @@ local session_labels = {
 	[M.SESSION.LONG_BREAK] = "🛌 Long Break",
 }
 
--- Sound notifications for milestones (5 min, 2 min, 1 min, 30 sec, 10 sec)
 local sound = require("nvim-pomodoro.sound")
 
+-- ── IPC broadcast helper ─────────────────────────────────────────────────────
+-- Lazily resolved so there is no circular-require at module load time.
+local function broadcast()
+	local ok, ipc = pcall(require, "nvim-pomodoro.ipc")
+	if ok and ipc.is_server() then
+		ipc.broadcast({
+			type = "state",
+			session = state.session,
+			seconds_left = state.seconds_left,
+			running = state.running,
+			cycle = state.cycle,
+		})
+	end
+end
+
+-- ── milestone notifications ──────────────────────────────────────────────────
 local function notify_milestone(secs)
 	for _, m in ipairs(MILESTONES) do
 		if secs == m.secs and not state.notified[m.secs] then
@@ -43,16 +58,13 @@ local function notify_milestone(secs)
 			vim.notify(
 				string.format("%s — %s", session_labels[state.session] or "Session", m.msg),
 				vim.log.levels.WARN,
-				{
-					title = "Pomodoro",
-					timeout = 8000,
-				}
+				{ title = "Pomodoro", timeout = 8000 }
 			)
 		end
 	end
 end
 
--- ── helpers ────────────────────────────────────────────────────────────────
+-- ── helpers ──────────────────────────────────────────────────────────────────
 
 local function session_duration(session, opts)
 	if session == M.SESSION.FOCUS then
@@ -86,7 +98,7 @@ local function stop_handle()
 	end
 end
 
--- ── public API ─────────────────────────────────────────────────────────────
+-- ── public API ───────────────────────────────────────────────────────────────
 
 function M.setup(opts)
 	state.opts = opts
@@ -105,7 +117,6 @@ function M.start(on_tick, on_done)
 		return
 	end
 
-	-- Kill any orphaned handle from a previous load
 	stop_handle()
 	sound.play("start")
 
@@ -139,16 +150,19 @@ function M.start(on_tick, on_done)
 				local nxt = next_session()
 				state.session = nxt
 				state.seconds_left = session_duration(nxt, state.opts)
+				state.notified = {}
 
 				if state.on_done then
 					state.on_done(finished, nxt)
 				end
 				state.running = false
 				stop_handle()
+				broadcast()
 				return
 			end
 
 			state.seconds_left = state.seconds_left - 1
+			broadcast()
 		end)
 	)
 end
@@ -159,6 +173,7 @@ function M.pause()
 	end
 	state.running = false
 	stop_handle()
+	broadcast()
 end
 
 function M.resume()
@@ -176,19 +191,17 @@ function M.stop()
 	state.on_tick = nil
 	state.on_done = nil
 	stop_handle()
-	-- Stop any in-flight tick sound
 	local b = require("nvim-pomodoro.sound.backend.macos")
 	pcall(b.stop_tick)
+	broadcast()
 end
 
 function M.is_running()
 	return state.running
 end
-
 function M.current_session()
 	return state.session
 end
-
 function M.seconds_left()
 	return state.seconds_left
 end
@@ -198,6 +211,15 @@ function M.switch_session(session)
 	state.session = session
 	state.seconds_left = session_duration(session, state.opts)
 	state.notified = {}
+	broadcast()
+end
+
+--- Apply a state snapshot received from the server (client-side only).
+function M.apply_remote_state(s)
+	state.session = s.session
+	state.seconds_left = s.seconds_left
+	state.running = s.running
+	state.cycle = s.cycle or state.cycle
 end
 
 return M
