@@ -26,6 +26,8 @@ local HEIGHT = 20
 local state = {
 	buf = nil,
 	win = nil,
+  backdrop_buf = nil,
+  backdrop_win = nil,   
 	active = SESSION.FOCUS,
 	detached = false,
 }
@@ -120,6 +122,27 @@ local function space_around(items, width)
 		end
 	end
 	return result
+end
+
+-- Open a full-screen dim layer behind the popup
+local function open_backdrop()
+	local ui = vim.api.nvim_list_uis()[1]
+	local buf = vim.api.nvim_create_buf(false, true)
+	local win = vim.api.nvim_open_win(buf, false, {
+		relative = "editor",
+		width = ui.width,
+		height = ui.height,
+		row = 0,
+		col = 0,
+		style = "minimal",
+		border = "none",
+		focusable = false,
+		zindex = 40, 
+	})
+	vim.api.nvim_set_hl(0, "PomodoroBackdrop", { bg = "#0a0a0f", blend = 30 })
+	vim.api.nvim_win_set_option(win, "winhighlight", "Normal:PomodoroBackdrop")
+	vim.api.nvim_win_set_option(win, "winblend", 90)
+	return buf, win
 end
 
 -- ── rendering ──────────────────────────────────────────────────────────────
@@ -326,6 +349,7 @@ function M._open_win()
 	local row = math.floor((ui.height - HEIGHT) / 2)
 	local col = math.floor((ui.width - WIDTH) / 2)
 
+  state.backdrop_buf, state.backdrop_win = open_backdrop()
 	state.win = vim.api.nvim_open_win(state.buf, true, {
 		relative = "editor",
 		width = WIDTH,
@@ -427,6 +451,12 @@ end
 -- ── public API ─────────────────────────────────────────────────────────────
 
 function M.close()
+  if state.backdrop_win and vim.api.nvim_win_is_valid(state.backdrop_win) then
+    vim.api.nvim_win_close(state.backdrop_win, true)
+  end
+  state.backdrop_win = nil
+  state.backdrop_buf = nil
+
 	timer.stop()
 	if is_open() then
 		vim.api.nvim_win_close(state.win, true)
@@ -437,6 +467,12 @@ function M.close()
 end
 
 function M.detach()
+  if state.backdrop_win and vim.api.nvim_win_is_valid(state.backdrop_win) then
+    vim.api.nvim_win_close(state.backdrop_win, true)
+  end
+  state.backdrop_win = nil
+  state.backdrop_buf = nil
+
 	if is_open() then
 		vim.api.nvim_win_close(state.win, true)
 	end
